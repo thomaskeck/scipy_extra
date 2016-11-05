@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 
-import copy
 import numpy as np
 import scipy
 import scipy.optimize
 import scipy.stats
-import matplotlib.pyplot as plt
 
-import extra_stats
+from . import stats
 
 from multiprocessing import Pool
-
 
 class Model(object):
     def __init__(self, name):
@@ -22,11 +19,11 @@ class Model(object):
       
     @property
     def distribution(self):
-        return extra_stats.linear_model_gen(dict(zip(self.names, self.distributions)), name=self.name)
+        return stats.linear_model_gen(dict(zip(self.names, self.distributions)), name=self.name)
     
     @property
     def frozen_distribution(self):
-        return extra_stats.linear_model_gen(dict(zip(self.names, self.distributions)), name=self.name)(**self.parameters)
+        return stats.linear_model_gen(dict(zip(self.names, self.distributions)), name=self.name)(**self.parameters)
 
     def __iter__(self):
         return iter(dict(zip(self.names, self.distributions)))
@@ -48,7 +45,7 @@ class Model(object):
 
     def get_frozen_components(self):
         for name, distribution in zip(self.names, self.distributions):
-            shapes = [self.parameters['{}_{}'.format(name, s)] for s in extra_stats.get_shape_parameters(distribution)]
+            shapes = [self.parameters['{}_{}'.format(name, s)] for s in stats.get_shape_parameters(distribution)]
             yield name, distribution(*shapes)
 
     def set_parameters(self, **parameters):
@@ -74,7 +71,10 @@ class Model(object):
 
 class Fitter(object):
     def __init__(self, loss='maximum-likelihood', method='nelder-mead'):
-        self.loss = loss
+        if loss == 'maximum-likelihood':
+            self.loss = self._maximum_likelihood_loss
+        else:
+            raise RuntimeError("Unkown loss function named " + loss)
         self.method = method
 
     def _maximum_likelihood_loss(self, free_parameters, data, fit_model):
@@ -87,7 +87,7 @@ class Fitter(object):
 
     def fit(self, fit_model, data):
         initial_parameters = np.array(list(fit_model.get_free_parameters().values()))
-        r = scipy.optimize.minimize(self._maximum_likelihood_loss, initial_parameters, args=(data, fit_model), method=self.method)
+        r = scipy.optimize.minimize(self.loss, initial_parameters, args=(data, fit_model), method=self.method)
         parameters = dict(zip(fit_model.get_free_parameters().keys(), r.x))
         for parameter, function in fit_model.constraints.items():
             parameters[parameter] = function(parameters)
@@ -106,6 +106,7 @@ class Fitter(object):
         with Pool(processes=4) as pool:
             results = pool.map(task, linspace)
         print(results)
+        return results
 
     def stability_test(self, fit_model, parameter, linspace):
         def task(value):
@@ -117,40 +118,5 @@ class Fitter(object):
         with Pool(processes=4) as pool:
             results = pool.map(task, linspace)
         print(results)
-
-
-def plot_data_and_model(data, fit_model):
-    plt.hist(data, bins=100, range=(-3, 3), normed=True)
-    plt.plot(X, fit_model.frozen_distribution.pdf(X), label=fit_model.name)
-    for name, distribution in fit_model.get_frozen_components():
-        plt.plot(X, distribution.pdf(X), label=name)
-    plt.show()
-
-
-if __name__ == '__main__':
-    X = np.linspace(-3, 3, 1000)
-
-    fit_model = Model('MyFitModel')
-    fit_model.add_component('signal', scipy.stats.norm, loc=0.2, scale=0.1, norm=0.1)
-    fit_model.add_component('background', scipy.stats.norm, loc=0.8, scale=1.0, norm=0.1)
-
-    continuum_binned = np.histogram(scipy.stats.norm.rvs(size=100000, loc=0, scale=2.0), bins=100)
-    fit_model.add_component('continuum', extra_stats.template_gen(continuum_binned), norm=0.8)
-    
-    fit_model.fix_parameter('signal_scale')
-    fit_model.fix_parameter('background_scale')
-    fit_model.add_constraint('continuum_norm', lambda p: 1.0 - p['signal_norm'] - p['background_norm'])
-
-    data = fit_model.frozen_distribution.rvs(size=10000)
-    plot_data_and_model(data, fit_model)
-    print(fit_model.parameters)
-
-    fit_model.set_parameters(signal_loc=0.5, background_loc=0.5, signal_norm=0.4, background_norm=0.3, continuum_norm=0.3)
-    fitter = Fitter(MaximumLikelihoodLoss)
-    result, r = fitter.fit(fit_model, data)
-    print("Raw scipy result", r)
-    print("Result parameters", result)
-    fit_model.set_parameters(**result)
-    
-    plot_data_and_model(data, fit_model)
+        return results
 

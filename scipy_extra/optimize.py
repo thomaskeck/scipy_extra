@@ -2,42 +2,68 @@
 
 import scipy.optimize
 import numpy as np
+import array
+import collections
 
-from array import array as arr
-
-
-def Minuit(fun, x0, args=(), **options):
+def Minuit(fun, x0, args=(), bounds=None, verbose=0, step_size=0.01, n_iterations=500, delta_one_sigma=0.5, **options):
+    """
+    Interface to ROOT Minuit
+    @param bounds list of tuple with limits for each variable
+    @param verbose -1 (silent) 0 (normal) 1 (verbose)
+    @param step_size float or Sequence
+    @param n_iterations maximum number of iterations
+    @param delta_one_sigma delta in loss function which corresponds to one sigma errors
+    """
     from ROOT import TMinuit, Double, Long
+    n_parameters = len(x0)
 
-    if self.step is None:
-            self.step = arr('d', [0.01] * npar)
-    if self.lower is None:
-            self.lower = [0] * npar
-    if self.upper is None:
-            self.upper = [0] * npar
+    def to_minimize(npar, deriv, f, apar, iflag):
+        f[0] = fun(np.array([apar[i] for i in range(n_parameters)]), *args)
 
-    myMinuit = TMinuit(len(x0))
-    myMinuit.SetFCN(fun)
+    minuit = TMinuit(n_parameters)
+    minuit.SetFCN(to_minimize)
+
+    minuit.SetPrintLevel(verbose)
 
     ierflg = np.array(0, dtype=np.int32)
+    minuit.mnexcm("SET ERR", np.array([delta_one_sigma]), 1, ierflg)
 
-    arglist = arr('d', 10 * [0.])
-    arglist[0] = 500
-    arglist[1] = 1.
-    for i in range(0, npar):
-            myMinuit.mnparm(i, self.names[i], self.vstart[i], self.step[i], self.lower[i], self.upper[i], ierflg)
+    if ierflg > 0:
+        raise RuntimeError("Error during \"SET ERR\" call")
 
-    myMinuit.mnexcm("MIGRAD", arglist, 2, ierflg)
-    self.finalPar = []
-    self.finalParErr = []
+    for i in range(n_parameters):
+        low, high = 0.0, 0.0 # Zero seems to mean no limit
+        if bounds is not None:
+            low, high = bounds[i]
+        minuit.mnparm(i, 'Parameter_{}'.format(i), x0[i], step_size[i] if isinstance(step_size, collections.Sequence) else step_size, low, high, ierflg)
+        if ierflg > 0:
+            raise RuntimeError("Error during \"nmparm\" call for parmameter {}".format(i))
+
+    minuit.mnexcm("MIGRAD", np.array([n_iterations, 0.01], dtype=np.float64), 2, ierflg)
+    
+    if ierflg > 0:
+        raise RuntimeError("Error during \"MIGRAD\" call")
+
+    xbest = np.zeros(n_parameters)
+    xbest_error = np.zeros(n_parameters)
+
     p, pe = Double(0), Double(0)
+    for i in range(n_parameters):
+        minuit.GetParameter(i, p, pe)
+        xbest[i] = p
+        xbest_error[i] = pe
 
-    for i in range(0, npar):
-            myMinuit.GetParameter(i, p, pe)
-            self.finalPar.append(float(p))
-            self.finalParErr.append(float(pe))
+    buf = array.array('d', [0.]*(n_parameters**2))
+    minuit.mnemat(buf, n_parameters) # retrieve error matrix
+    hessian = np.array(buf).reshape(n_parameters, n_parameters)
 
-    return scipy.optimize.OptimizeResult
-    print(self.finalPar)
-    print(self.finalParErr) 
+    amin = Double(0.) # value of fcn at minimum
+    edm = Double(0.) # estimated distance to mimimum
+    errdef = Double(0.) # delta_fcn used to define 1 sigma errors
+    nvpar = np.array(0, dtype=np.int32) # number of variable parameters
+    nparx = np.array(0, dtype=np.int32) # total number of parameters
+    icstat = np.array(0, dtype=np.int32) # status of error matrix: 3=accurate 2=forced pos. def 1= approximative 0=not calculated
+    minuit.mnstat(amin, edm, errdef, nvpar, nparx, icstat)
+
+    return scipy.optimize.OptimizeResult(x=xbest, fun=amin, hessian=hessian, success=(ierflg == 0), status=ierflg)
 
