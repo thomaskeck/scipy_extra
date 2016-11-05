@@ -1,7 +1,7 @@
 from distutils.core import setup
 
-setup(name='Belle2PyFit',
+setup(name='scipy_extra',
       version='',
       package_dir={ '': '.' },
-      packages=['Belle2PyFit'])
+      packages=['scipy_extra'])
 

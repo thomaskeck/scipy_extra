@@ -74,9 +74,9 @@ class FitModel(object):
 def MaximumLikelihoodLoss(free_parameters, data, fit_model):
     parameters = {key: free_parameters[i] for i, key in enumerate(fit_model.get_free_parameters().keys())}
     for parameter, function in fit_model.constraints.items():
-        if parameter in self.parameters:
+        if parameter in fit_model.parameters:
             parameters[parameter] = function(parameters)
-    return -np.sum(np.log(fit_mode.distribution.pdf(data, **parameters)))
+    return -np.sum(np.log(fit_model.distribution.pdf(data, **parameters)))
 
 
 class Fitter(object):
@@ -88,7 +88,7 @@ class Fitter(object):
         initial_parameters = np.array(list(fit_model.get_free_parameters().values()))
         r = scipy.optimize.minimize(self.loss, initial_parameters, args=(data, fit_model), method=self.method)
         parameters = dict(zip(fit_model.get_free_parameters().keys(), r.x))
-        for parameter, function in self.constraints.items():
+        for parameter, function in fit_model.constraints.items():
             parameters[parameter] = function(parameters)
         return parameters, r
 
