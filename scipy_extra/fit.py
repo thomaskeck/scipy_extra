@@ -11,7 +11,8 @@ import extra_stats
 
 from multiprocessing import Pool
 
-class FitModel(object):
+
+class Model(object):
     def __init__(self, name):
         self.name = name
         self.names = []
@@ -71,22 +72,22 @@ class FitModel(object):
         return {parameter: value for parameter, value in self.parameters.items() if parameter in self.constraints}
 
 
-def MaximumLikelihoodLoss(free_parameters, data, fit_model):
-    parameters = {key: free_parameters[i] for i, key in enumerate(fit_model.get_free_parameters().keys())}
-    for parameter, function in fit_model.constraints.items():
-        if parameter in fit_model.parameters:
-            parameters[parameter] = function(parameters)
-    return -np.sum(np.log(fit_model.distribution.pdf(data, **parameters)))
-
-
 class Fitter(object):
-    def __init__(self, loss, method='nelder-mead'):
+    def __init__(self, loss='maximum-likelihood', method='nelder-mead'):
         self.loss = loss
         self.method = method
 
+    def _maximum_likelihood_loss(self, free_parameters, data, fit_model):
+        parameters = {key: free_parameters[i] for i, key in enumerate(fit_model.get_free_parameters().keys())}
+        for parameter, function in fit_model.constraints.items():
+            if parameter in fit_model.parameters:
+                parameters[parameter] = function(parameters)
+        return -np.sum(np.log(fit_model.distribution.pdf(data, **parameters)))
+
+
     def fit(self, fit_model, data):
         initial_parameters = np.array(list(fit_model.get_free_parameters().values()))
-        r = scipy.optimize.minimize(self.loss, initial_parameters, args=(data, fit_model), method=self.method)
+        r = scipy.optimize.minimize(self._maximum_likelihood_loss, initial_parameters, args=(data, fit_model), method=self.method)
         parameters = dict(zip(fit_model.get_free_parameters().keys(), r.x))
         for parameter, function in fit_model.constraints.items():
             parameters[parameter] = function(parameters)
@@ -129,7 +130,7 @@ def plot_data_and_model(data, fit_model):
 if __name__ == '__main__':
     X = np.linspace(-3, 3, 1000)
 
-    fit_model = FitModel('MyFitModel')
+    fit_model = Model('MyFitModel')
     fit_model.add_component('signal', scipy.stats.norm, loc=0.2, scale=0.1, norm=0.1)
     fit_model.add_component('background', scipy.stats.norm, loc=0.8, scale=1.0, norm=0.1)
 
