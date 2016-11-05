@@ -46,7 +46,7 @@ class Model(object):
     def get_frozen_components(self):
         for name, distribution in zip(self.names, self.distributions):
             shapes = [self.parameters['{}_{}'.format(name, s)] for s in stats.get_shape_parameters(distribution)]
-            yield name, distribution(*shapes)
+            yield name, self.parameters['{}_norm'.format(name)], distribution(*shapes)
 
     def set_parameters(self, **parameters):
         for parameter in parameters:

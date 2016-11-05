@@ -63,12 +63,13 @@ class linear_model_gen(scipy.stats.rv_continuous):
         this method splits up the individual positional arguments
         into the norm arguments and the shape arguments for each individual component
         """
-        norm_values, rest = parameters[:len(self.distribution_norms)], parameters[len(self.distribution_norms):]
+        norm_values, parameters = parameters[:len(self.distribution_norms)], parameters[len(self.distribution_norms):]
         shape_values = []
         for shape in self.distribution_shapes:
             shape_values.append(parameters[:len(shape)])
             parameters = parameters[len(shape):]
-        norm_values = np.array(norm_values) / np.sum(norm_values)
+        total_norm = np.sum(np.array(norm_values), axis=0)
+        norm_values = [norm_value / total_norm for norm_value in norm_values]
         return norm_values, shape_values
 
     def _pdf(self, x, *args):
@@ -76,14 +77,14 @@ class linear_model_gen(scipy.stats.rv_continuous):
         The combined PDF is the sum of the distribution PDFs weighted by their individual norm factors
         """
         norm_values, shape_values = self._extract_positional_arguments(args)
-        return np.sum(norm * distribution.pdf(x, *shape) for norm, distribution, shape in zip(norm_values, self.distributions.values(), shape_values))
+        return np.sum((norm * distribution.pdf(x, *shape) for norm, distribution, shape in zip(norm_values, self.distributions.values(), shape_values)), axis=0)
     
     def _cdf(self, x, *args):
         """
         The combined CDF is the sum of the distribution CDFs weighted by their individual norm factors
         """
         norm_values, shape_values = self._extract_positional_arguments(args)
-        return np.sum(norm * distribution.cdf(x, *shape) for norm, distribution, shape in zip(norm_values, self.distributions.values(), shape_values))
+        return np.sum((norm * distribution.cdf(x, *shape) for norm, distribution, shape in zip(norm_values, self.distributions.values(), shape_values)), axis=0)
     
     def _rvs(self, *args):
         """
@@ -127,12 +128,13 @@ class template_gen(scipy.stats.rv_continuous):
         """
         self.histogram = histogram
         pdf, bins = self.histogram
-        pdf = pdf / float(np.sum(pdf))
-        cdf = np.cumsum(pdf)[1:]
+        bin_widths = (np.roll(bins, -1) - bins)[:-1]
+        pdf = pdf / float(np.sum(pdf * bin_widths)) 
+        cdf = np.cumsum(pdf * bin_widths)[:-1]
         self.template_bins = bins
+        self.template_bin_widths = bin_widths
         self.template_pdf = np.hstack([0.0, pdf, 0.0])
         self.template_cdf = np.hstack([0.0, cdf, 1.0])
-        self.template_bin_centers = (bins - (bins - np.roll(bins, 1)) / 2.0) [1:]
         super(template_gen, self).__init__(*args, **kwargs)
 
     def _pdf(self, x):
@@ -152,9 +154,9 @@ class template_gen(scipy.stats.rv_continuous):
         Random numbers distributed like the original histogram
         """
         probabilities = self.template_pdf[1:-1]
-        probabilities /= probabilities.sum()
-        choices = np.random.choice(len(self.template_pdf) - 2, size=self._size, p=probabilities)
-        return self.template_bin_centers[choices]
+        choices = np.random.choice(len(self.template_pdf) - 2, size=self._size, p=probabilities / probabilities.sum())
+        uniform = np.random.uniform(size=self._size)
+        return self.template_bins[choices] + uniform * self.template_bin_widths[choices]
     
     def _updated_ctor_param(self):
         """
