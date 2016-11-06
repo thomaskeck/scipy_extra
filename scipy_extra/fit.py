@@ -21,11 +21,11 @@ class Model(object):
       
     @property
     def distribution(self):
-        return stats.linear_model_gen(dict(zip(self.names, self.distributions)), name=self.name)
+        return stats.mixture_gen(dict(zip(self.names, self.distributions)), name=self.name)
     
     @property
     def frozen_distribution(self):
-        return stats.linear_model_gen(dict(zip(self.names, self.distributions)), name=self.name)(**self.parameters)
+        return stats.mixture_gen(dict(zip(self.names, self.distributions)), name=self.name)(**self.parameters)
     
     @property
     def norm(self):

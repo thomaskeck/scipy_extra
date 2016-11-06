@@ -19,9 +19,9 @@ def get_shape_parameters(distribution):
     return shape_parameters
 
 
-class linear_model_gen(scipy.stats.rv_continuous):
+class mixture_gen(scipy.stats.rv_continuous):
     """
-    Linear Model Distribution Generator
+    Mixture Distribution Generator
 
     Model = A * PDF_A + B * PDF_B + C * PDF_C + ...
 
@@ -32,7 +32,7 @@ class linear_model_gen(scipy.stats.rv_continuous):
     relative normalisation of this component.
     E.g.
 
-    linear_model_gen({'Gauss': scipy.stats.norm, 'Gamma': scipy.stats.gamma})
+    mixture_gen({'Gauss': scipy.stats.norm, 'Gamma': scipy.stats.gamma})
     has the following shape parameters:
       - Gauss_norm
       - Gauss_loc
@@ -55,7 +55,7 @@ class linear_model_gen(scipy.stats.rv_continuous):
             self.distribution_norms.append('{}_norm'.format(component))
             self.distribution_shapes.append(['{}_{}'.format(component, s) for s in get_shape_parameters(distribution)])
         kwargs['shapes'] = ', '.join(sum(self.distribution_shapes, self.distribution_norms))
-        super(linear_model_gen, self).__init__(*args, **kwargs)
+        super(mixture_gen, self).__init__(*args, **kwargs)
 
     def _extract_positional_arguments(self, parameters):
         """
@@ -104,7 +104,7 @@ class linear_model_gen(scipy.stats.rv_continuous):
         scipy requires the arguments of the constructor otherwise
         freezing distributions does not work.
         """
-        dct = super(linear_model_gen, self)._updated_ctor_param()
+        dct = super(mixture_gen, self)._updated_ctor_param()
         dct['distributions'] = self.distributions
         return dct
 
