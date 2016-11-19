@@ -21,11 +21,11 @@ class Model(object):
       
     @property
     def distribution(self):
-        return stats.mixture_gen(dict(zip(self.names, self.distributions)), name=self.name)
+        return stats.mixture_gen(list(zip(self.names, self.distributions)), name=self.name)
     
     @property
     def frozen_distribution(self):
-        return stats.mixture_gen(dict(zip(self.names, self.distributions)), name=self.name)(**self.parameters)
+        return stats.mixture_gen(list(zip(self.names, self.distributions)), name=self.name)(**self.parameters)
     
     @property
     def norm(self):
@@ -51,7 +51,7 @@ class Model(object):
 
     def get_frozen_components(self):
         for name, distribution in zip(self.names, self.distributions):
-            shapes = [self.parameters['{}_{}'.format(name, s)] for s in stats.get_shape_parameters(distribution)]
+            shapes = [self.parameters['{}_{}'.format(name, s)] for s in stats._get_shape_parameters(distribution)]
             yield name, self.parameters['{}_norm'.format(name)], distribution(*shapes)
 
     def set_parameters(self, **parameters):
