@@ -171,7 +171,6 @@ class template_gen(rv_continuous):
     template = scipy_extra.stats.template_gen(hist)
 
     """
-    _support_mask = rv_continuous._support_mask
 
     def __init__(self, histogram, *args, **kwargs):
         """

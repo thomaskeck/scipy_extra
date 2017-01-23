@@ -35,18 +35,17 @@ if __name__ == '__main__':
     
     fit_model.fix_parameter('signal_scale')
     fit_model.fix_parameter('background_scale')
-    fit_model.add_constraint('continuum_norm', lambda p: max(1.0 - p['signal_norm'] - p['background_norm'], 0.0))
+    #fit_model.add_constraint('continuum_norm', lambda p: max(1.0 - p['signal_norm'] - p['background_norm'], 0.0))
 
     data = fit_model.frozen_distribution.rvs(size=10000)
     plot_data_and_model("Model with true parameters", data, fit_model)
     print(fit_model.parameters)
 
     fit_model.set_parameters(signal_loc=0.5, background_loc=0.5, signal_norm=0.4, background_norm=0.3, continuum_norm=0.3)
-    #fit_model.set_parameters(signal_loc=0.5, background_loc=0.5, signal_norm=4000, background_norm=3000, continuum_norm=3000)
     plot_data_and_model("Model Before Fit", data, fit_model)
 
-    #fitter = scipy_extra.fit.Fitter(loss='extended-unbinned-maximum-likelihood')
-    fitter = scipy_extra.fit.Fitter(loss='unbinned-maximum-likelihood')
+    fitter = scipy_extra.fit.Fitter(loss='extended-unbinned-maximum-likelihood')
+    #fitter = scipy_extra.fit.Fitter(loss='unbinned-maximum-likelihood')
     result, r = fitter.fit(fit_model, data)
     print("Raw scipy result", r)
     print("Result parameters", result)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import math
-import numpy as nlip
+import numpy as np
 import scipy
 import scipy.optimize
 import scipy.stats
@@ -86,17 +86,17 @@ class Model(object):
 
 
 def _likelihood_profile_task(args):
-    self, parameters, values, fit_model, data = args
+    self, parameters, values, fit_model, data, weights = args
     fit_model.set_parameters(**{parameter: value for parameter, value in zip(parameters, values)})
-    _, r = self.fit(fit_model, data)
+    _, r = self.fit(fit_model, data, weights)
     return r.fun
 
 
 def _likelihood_uncert_task(args):
-    self, parameter, value, fit_model, data, f = args
+    self, parameter, value, fit_model, data, f, weights = args
     fit_model.set_parameters(**{parameter: value})
     initial_parameters = np.array(list(fit_model.get_free_parameters().values()))
-    return f - self._unbinned_maximum_likelihood_loss(initial_parameters, data, fit_model)
+    return f - self._unbinned_maximum_likelihood_loss(initial_parameters, data, fit_model, weights)
 
 
 def _stability_test_task(args):
@@ -125,42 +125,47 @@ class Fitter(object):
                 parameters[parameter] = function(parameters)
         return parameters
 
-    def _unbinned_maximum_likelihood_loss(self, free_parameters, data, fit_model):
+    def _unbinned_maximum_likelihood_loss(self, free_parameters, data, fit_model, weights=None):
         parameters = self._get_current_parameters(free_parameters, fit_model)
-        return -np.sum(np.log(fit_model.distribution.pdf(data, **parameters)))
+        if weights is None:
+            weights = np.ones(len(data))
+        return -np.sum(weights * np.log(fit_model.distribution.pdf(data, **parameters)))
     
-    def _extended_unbinned_maximum_likelihood_loss(self, free_parameters, data, fit_model):
+    def _extended_unbinned_maximum_likelihood_loss(self, free_parameters, data, fit_model, weights=None):
         parameters = self._get_current_parameters(free_parameters, fit_model)
-        average_number_of_events = np.sum([parameters['{}_norm'.format(name)] for name in fit_model.names])
-        return self._unbinned_maximum_likelihood_loss(free_parameters, data, fit_model) + average_number_of_events
+        if weights is None:
+            weights = np.ones(len(data))
+        N = np.sum(weights)
+        average_number_of_events = np.sum([max(parameters['{}_norm'.format(name)], 0.0) for name in fit_model.names]) * N
+        return self._unbinned_maximum_likelihood_loss(free_parameters, data, fit_model, weights) - N * np.log(average_number_of_events) + average_number_of_events
 
-    def fit(self, fit_model, data):
+    def fit(self, fit_model, data, weights=None):
         initial_parameters = np.array(list(fit_model.get_free_parameters().values()))
         if len(initial_parameters) == 0:
             parameters = {}
-            r = scipy.optimize.OptimizeResult(x=np.array([]), fun=self.loss(np.array([]), data, fit_model), hessian=None, success=True, status=0)
+            r = scipy.optimize.OptimizeResult(x=np.array([]), fun=self.loss(np.array([]), data, fit_model, weights), hessian=None, success=True, status=0)
         else:
-            r = scipy.optimize.minimize(self.loss, initial_parameters, args=(data, fit_model), method=self.method)
+            r = scipy.optimize.minimize(self.loss, initial_parameters, args=(data, fit_model, weights), method=self.method)
             parameters = dict(zip(fit_model.get_free_parameters().keys(), r.x))
         for parameter, function in fit_model.constraints:
             parameters[parameter] = function(parameters)
         return parameters, r
 
-    def likelihood_profile(self, fit_model, parameter_spaces, data):
+    def likelihood_profile(self, fit_model, parameter_spaces, data, weights=None):
         parameters = parameter_spaces.keys()
         linspaces = parameter_spaces.values()
-        best_fit_parameters, _ = self.fit(fit_model, data)
+        best_fit_parameters, _ = self.fit(fit_model, data, weights)
         fit_model.set_parameters(**best_fit_parameters)
 
         for parameter in parameters:
             fit_model.fix_parameter(parameter)
 
         #with Pool(processes=4) as pool:
-        arguments = list(zip(cycle([self]), cycle([parameters]), zip(*linspaces), cycle([fit_model]), cycle([data])))
+        arguments = list(zip(cycle([self]), cycle([parameters]), zip(*linspaces), cycle([fit_model]), cycle([data]), cycle([weights])))
         results = list(map(_likelihood_profile_task, arguments))
         return results
 
-    def get_likelihood_uncertainty(self, parameters, a_opt, f_opt, fit_model, data):
+    def get_likelihood_uncertainty(self, parameters, a_opt, f_opt, fit_model, data, weights=None):
         """
         Get Likelhood uncertainties (optimum-likelihood-value + 1/2 gives asymmetric uncertainty for parameter a)
         Works fine with one free Parameter!
@@ -175,8 +180,8 @@ class Fitter(object):
         parameter_spaces = parameters.values()
         result_list = []
         for parameter_space, parameter_key, a_opt in zip(parameter_spaces, parameter_keys, a_opt):
-            results_lower = scipy.optimize.brentq(lambda x: _likelihood_uncert_task((self, parameter_key, x, fit_model, data, f_opt + 0.5)), parameter_space[0], a_opt)
-            results_upper = scipy.optimize.brentq(lambda x: _likelihood_uncert_task((self, parameter_key, x, fit_model, data, f_opt + 0.5)), a_opt, parameter_space[len(parameter_space)-1])
+            results_lower = scipy.optimize.brentq(lambda x: _likelihood_uncert_task((self, parameter_key, x, fit_model, data, f_opt + 0.5, weights)), parameter_space[0], a_opt)
+            results_upper = scipy.optimize.brentq(lambda x: _likelihood_uncert_task((self, parameter_key, x, fit_model, data, f_opt + 0.5, weights)), a_opt, parameter_space[len(parameter_space)-1])
             result_list.append((results_upper, results_lower))
         return result_list
 
@@ -188,11 +193,11 @@ class Fitter(object):
         results = list(map(_stability_test_task, arguments))
         return {parameter: values for parameter, *values in zip(parameters, *results)}
 
-    def fit_significance(self, parameter_max, parameter_null, fit_model, data):
+    def fit_significance(self, parameter_max, parameter_null, fit_model, data, weights=None):
         for key in fit_model.parameters.keys():
             fit_model.fix_parameter(key)
         fit_model.set_parameters(**parameter_max)
-        L_min = self.loss(np.array([]), data, fit_model)
+        L_min = self.loss(np.array([]), data, fit_model, weights)
         fit_model.set_parameters(**parameter_null)
-        L_null = self.loss(np.array([]), data, fit_model)
+        L_null = self.loss(np.array([]), data, fit_model, weights)
         return math.sqrt(2*abs((L_null-L_min)))
