@@ -282,6 +282,63 @@ class crystalball_gen(rv_continuous):
 crystalball = crystalball_gen(name='crystalball', longname="A Crystalball Function")
 
 
+class polynom_gen(rv_continuous):
+    """
+    Polynom distribution
+
+    %(before_notes)s
+
+    Notes
+    -----
+
+    %(after_notes)s
+
+    %(example)s
+    """
+    def __init__(self, n, *args, **kwargs):
+        """
+        """
+        self.n = n
+        kwargs['shapes'] = ', '.join(['a_{}'.format(i) for i in range(self.n+1)])
+        super(polynom_gen, self).__init__(*args, **kwargs)
+
+    def _pdf(self, x, *args):
+        """
+        Return PDF of the polynom function
+        """
+        pdf_not_normed = np.sum([args[i]*x**i for i in range(self.n+1)])
+        norm = np.sum([args[i] / (i+1) for i in range(self.n+1)])
+        return np.where((x < 0) | (x>1), 0.0, pdf_not_normed / norm)
+    
+    def _cdf(self, x, *args):
+        """
+        Return CDF of the polynom function
+        """
+        cdf_not_normed = np.sum([args[i]*x**(i+1) / (i+1) for i in range(self.n+1)])
+        norm = np.sum([args[i] / (i+1) for i in range(self.n+1)])
+        return np.where(x<0, 0.0, np.where(x>1, 1.0, cdf_not_normed / norm))
+
+    def _argcheck(self, *args):
+        """
+        TODO Check if chosen a_n lead to a positive definite pdf
+        """
+        return True
+    
+    def _updated_ctor_param(self):
+        """
+        Set the n degree as additional constructor argument
+        """
+        dct = super(polynom_gen, self)._updated_ctor_param()
+        dct['n'] = self.n
+        return dct
+polynom_1 = polynom_gen(1, name='polynom_1', longname="A Polynom Function of degree 1")
+polynom_2 = polynom_gen(2, name='polynom_2', longname="A Polynom Function of degree 2")
+polynom_3 = polynom_gen(3, name='polynom_3', longname="A Polynom Function of degree 3")
+polynom_4 = polynom_gen(4, name='polynom_4', longname="A Polynom Function of degree 4")
+polynom_5 = polynom_gen(5, name='polynom_5', longname="A Polynom Function of degree 5")
+polynom_6 = polynom_gen(6, name='polynom_6', longname="A Polynom Function of degree 6")
+
+
 def _argus_phi(chi):
     """
     Utility function for the argus distribution
