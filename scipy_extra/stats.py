@@ -306,17 +306,19 @@ class polynom_gen(rv_continuous):
         """
         Return PDF of the polynom function
         """
-        pdf_not_normed = np.sum([args[i]*x**i for i in range(self.n+1)])
-        norm = np.sum([args[i] / (i+1) for i in range(self.n+1)])
-        return np.where((x < 0) | (x>1), 0.0, pdf_not_normed / norm)
+        pdf_not_normed = np.sum([args[i]*x**i for i in range(self.n+1)], axis=0)
+        norm = np.sum([args[i] / (i+1) for i in range(self.n+1)], axis=0)
+        pdf = np.where((x < 0) | (x>1), 0.0, pdf_not_normed / norm)
+        return pdf
     
     def _cdf(self, x, *args):
         """
         Return CDF of the polynom function
         """
-        cdf_not_normed = np.sum([args[i]*x**(i+1) / (i+1) for i in range(self.n+1)])
-        norm = np.sum([args[i] / (i+1) for i in range(self.n+1)])
-        return np.where(x<0, 0.0, np.where(x>1, 1.0, cdf_not_normed / norm))
+        cdf_not_normed = np.sum([args[i]*x**(i+1) / (i+1) for i in range(self.n+1)], axis=0)
+        norm = np.sum([args[i] / (i+1) for i in range(self.n+1)], axis=0)
+        cdf = np.where(x<0, 0.0, np.where(x>1, 1.0, cdf_not_normed / norm))
+        return cdf
 
     def _argcheck(self, *args):
         """
