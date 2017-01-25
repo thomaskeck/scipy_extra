@@ -71,7 +71,7 @@ class Model(object):
         self.constraints.append((parameter, function))
         self.set_parameters(**{parameter: function(self.parameters)})
 
-    def fix_parameter(self, parameter, priority=10):
+    def fix_parameter(self, parameter):
         self.constraints = [(key, value) for key, value in self.constraints if key != parameter]
         self.constraints = [(parameter, lambda p: self.parameters[parameter])] + self.constraints
         self.set_parameters(**{parameter: self.parameters[parameter]})
