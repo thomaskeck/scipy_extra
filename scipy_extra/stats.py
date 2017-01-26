@@ -295,29 +295,29 @@ class polynom_gen(rv_continuous):
 
     %(example)s
     """
-    def __init__(self, n, *args, **kwargs):
+    def __init__(self, degree, *args, **kwargs):
         """
         """
-        self.n = n
-        kwargs['shapes'] = ', '.join(['a_{}'.format(i) for i in range(self.n+1)])
+        self.degree = degree
+        kwargs['shapes'] = ', '.join(['a_{}'.format(i) for i in range(self.degree + 1)])
         super(polynom_gen, self).__init__(*args, **kwargs)
 
     def _pdf(self, x, *args):
         """
         Return PDF of the polynom function
         """
-        pdf_not_normed = np.sum([args[i]*x**i for i in range(self.n+1)], axis=0)
-        norm = np.sum([args[i] / (i+1) for i in range(self.n+1)], axis=0)
-        pdf = np.where((x < 0) | (x>1), 0.0, pdf_not_normed / norm)
+        pdf_not_normed = np.sum([args[i]*x**i for i in range(self.degree + 1)], axis=0)
+        norm = np.sum([2 * args[i] / (i+1) for i in range(0, self.degree + 1, 2)], axis=0)
+        pdf = np.where(np.abs(x) > 1.0, 0.0, pdf_not_normed / norm)
         return pdf
     
     def _cdf(self, x, *args):
         """
         Return CDF of the polynom function
         """
-        cdf_not_normed = np.sum([args[i]*x**(i+1) / (i+1) for i in range(self.n+1)], axis=0)
-        norm = np.sum([args[i] / (i+1) for i in range(self.n+1)], axis=0)
-        cdf = np.where(x<0, 0.0, np.where(x>1, 1.0, cdf_not_normed / norm))
+        cdf_not_normed = np.sum([args[i]*(x**(i+1) - (-1)**(i+1))/ (i+1) for i in range(self.degree + 1)], axis=0)
+        norm = np.sum([2 * args[i] / (i+1) for i in range(0, self.degree + 1, 2)], axis=0)
+        cdf = np.where(x < -1.0, 0.0, np.where(x > 1.0, 1.0, cdf_not_normed / norm))
         return cdf
 
     def _argcheck(self, *args):
@@ -331,8 +331,12 @@ class polynom_gen(rv_continuous):
         Set the n degree as additional constructor argument
         """
         dct = super(polynom_gen, self)._updated_ctor_param()
-        dct['n'] = self.n
+        dct['degree'] = self.degree
         return dct
+
+    def _munp(self, n):
+        """Compute the n-th non-central moment."""
+        return np.sum([args[i] / (n + self.degree + 1) for i in range(self.degree + 1) if (self.degree + n) % 2 == 0])
 polynom_1 = polynom_gen(1, name='polynom_1', longname="A Polynom Function of degree 1")
 polynom_2 = polynom_gen(2, name='polynom_2', longname="A Polynom Function of degree 2")
 polynom_3 = polynom_gen(3, name='polynom_3', longname="A Polynom Function of degree 3")
