@@ -94,9 +94,11 @@ def _likelihood_profile_task(args):
 
 def _likelihood_uncert_task(args):
     self, parameter, value, fit_model, data, f, weights = args
+    # fit_model.set_parameters(**{parameter: value})
+    # initial_parameters = np.array(list(fit_model.get_free_parameters().values()))
     fit_model.set_parameters(**{parameter: value})
-    initial_parameters = np.array(list(fit_model.get_free_parameters().values()))
-    return f - self._unbinned_maximum_likelihood_loss(initial_parameters, data, fit_model, weights)
+    _, r = self.fit(fit_model, data, weights)
+    return f - r.fun
 
 
 def _stability_test_task(args):
