@@ -12,6 +12,21 @@ from multiprocessing import Pool
 from itertools import cycle
 
 
+class LambdaReplacement():
+    def __init__(self, dictionary_or_value, parameter=None):
+        if parameter is None:
+            self.return_value = dictionary_or_value
+        else:
+            self.dictionary = dictionary_or_value
+            self.parameter = parameter
+            self.return_value = None
+    def __call__(self, p):
+        if self.return_value is not None:
+            return self.return_value
+        else:
+            return self.dictionary[self.parameter]
+
+
 class Model(object):
     def __init__(self, name):
         self.name = name
@@ -46,9 +61,9 @@ class Model(object):
          for key, value in parameters.items():
              self.parameters['{}_{}'.format(name, key)] = value
          if loc is None:
-             self.add_constraint('{}_loc'.format(name), lambda x: 0.0)
+             self.add_constraint('{}_loc'.format(name), LambdaReplacement(0.0))
          if scale is None:
-             self.add_constraint('{}_scale'.format(name), lambda x: 1.0)
+             self.add_constraint('{}_scale'.format(name), LambdaReplacement(1.0))
 
     def get_frozen_components(self):
         for name, distribution in zip(self.names, self.distributions):
@@ -73,7 +88,7 @@ class Model(object):
 
     def fix_parameter(self, parameter):
         self.constraints = [(key, value) for key, value in self.constraints if key != parameter]
-        self.constraints = [(parameter, lambda p: self.parameters[parameter])] + self.constraints
+        self.constraints = [(parameter, LambdaReplacement(self.parameters, parameter))] + self.constraints
         self.set_parameters(**{parameter: self.parameters[parameter]})
 
     def get_free_parameters(self):
