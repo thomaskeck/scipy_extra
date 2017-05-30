@@ -27,6 +27,34 @@ class LambdaReplacement():
             return self.dictionary[self.parameter]
 
 
+def template_test(fit_model, sample, x_range=(-2, 4)):
+    """
+    Performs Kolmogorov-Test to compare a datasamples with distributions of fit-model components
+    @param fit_model: scipy_extra Fit-Model
+    @param sample: Sample object. For every component of fit-model there is a pandas dataframe in sample
+    @param x_range:
+    @return:
+    """
+    kolmorogov = {}
+    X = np.linspace(x_range[0], x_range[1], 300)
+    for name, _, distribution in fit_model.get_frozen_components():
+        df = getattr(sample, name)
+        if len(df) == 0:
+            kolmorogov[name] = (0, 0)
+            continue
+        d = max(abs(_empiric_cdf(x, df) - distribution.cdf(x)) for x in X)
+        p = 0
+        for i in range(1, 1000):
+            p += pow(-1, i - 1) * math.exp(-2 * pow(i, 2) * pow(math.sqrt(len(df)) * d, 2))
+        p *= 2
+        kolmorogov[name] = (p, d)
+    return kolmorogov
+
+
+def _empiric_cdf(x, data):
+    return len(data[data < x]) / len(data)
+
+
 class Model(object):
     def __init__(self, name):
         self.name = name
@@ -109,8 +137,6 @@ def _likelihood_profile_task(args):
 
 def _likelihood_uncert_task(args):
     self, parameter, value, fit_model, data, f, weights = args
-    # fit_model.set_parameters(**{parameter: value})
-    # initial_parameters = np.array(list(fit_model.get_free_parameters().values()))
     fit_model.set_parameters(**{parameter: value})
     _, r = self.fit(fit_model, data, weights)
     return f - r.fun
@@ -218,3 +244,4 @@ class Fitter(object):
         fit_model.set_parameters(**parameter_null)
         L_null = self.loss(np.array([]), data, fit_model, weights)
         return math.sqrt(2*abs((L_null-L_min)))
+
