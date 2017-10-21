@@ -5,6 +5,7 @@ import numpy as np
 import array
 import collections
 
+
 def Minuit(fun, x0, args=(), bounds=None, verbose=0, step_size=0.01, n_iterations=500, delta_one_sigma=0.5, **options):
     """
     Interface to ROOT Minuit

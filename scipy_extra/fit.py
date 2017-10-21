@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 
-import math
 import numpy as np
 import scipy
 import scipy.optimize
-import scipy.stats
 
 from . import stats
 
@@ -45,7 +43,7 @@ def template_test(fit_model, sample, x_range=(-2, 4)):
         d = max(abs(_empiric_cdf(x, df) - distribution.cdf(x)) for x in X)
         p = 0
         for i in range(1, 1000):
-            p += pow(-1, i - 1) * math.exp(-2 * pow(i, 2) * pow(math.sqrt(len(df)) * d, 2))
+            p += -1**(i - 1) * np.exp(-2 * i**2 * (np.sqrt(len(df)) * d)**2)
         p *= 2
         kolmorogov[name] = (p, d)
     return kolmorogov
@@ -65,11 +63,11 @@ class Model(object):
       
     @property
     def distribution(self):
-        return stats.mixture_gen(list(zip(self.names, self.distributions)), name=self.name)
+        return stats.rv_mixture(list(zip(self.names, self.distributions)), name=self.name)
     
     @property
     def frozen_distribution(self):
-        return stats.mixture_gen(list(zip(self.names, self.distributions)), name=self.name)(**self.parameters)
+        return stats.rv_mixture(list(zip(self.names, self.distributions)), name=self.name)(**self.parameters)
     
     @property
     def norm(self):
@@ -243,5 +241,5 @@ class Fitter(object):
         L_min = self.loss(np.array([]), data, fit_model, weights)
         fit_model.set_parameters(**parameter_null)
         L_null = self.loss(np.array([]), data, fit_model, weights)
-        return math.sqrt(2*abs((L_null-L_min)))
+        return np.sqrt(2*abs((L_null-L_min)))
 
