@@ -98,9 +98,9 @@ class rv_mixture(rv_continuous):
         for shape in self._distribution_shapes:
             shape_values.append(parameters[:len(shape)])
             parameters = parameters[len(shape):]
-        total_norm = np.sum(np.array(norm_values), axis=0)
-        norm_values = [norm_value / total_norm for norm_value in norm_values]
-        return norm_values, shape_values
+        norm_values = np.maximum(np.array(norm_values), 0.0)
+        total_norm = np.sum(norm_values, axis=0)
+        return norm_values / total_norm, shape_values
 
     def _pdf(self, x, *args):
         """
