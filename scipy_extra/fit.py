@@ -10,6 +10,34 @@ from multiprocessing import Pool
 from itertools import cycle
 
 
+class Fitter(object):
+    def __init__(self, mapping, distributions, method='nelder-mead'):
+        self.mapping = mapping
+        self.distributions = distributions
+        self.method = method
+
+    def _maximum_likelihood_loss(self, free_parameters, data, weights):
+        loss = 0.0 
+        parameters = self.mapping(free_parameters)
+        for d, w, p, distribution in zip(data, weights, parameters, self.distributions):
+            if '__normalisation__' in p:
+                N = np.sum(w)
+                average_number_of_events = p['__normalisation__'] * N 
+                loss += - N * np.log(average_number_of_events) + average_number_of_events
+                del p['__normalisation__']
+            loss += -np.sum(w * np.log(distribution.pdf(d, **p)))
+        return loss
+
+    def _get_weights(self, weights, data):
+        if weights is None:
+            weights = [np.ones(len(d)) for d in data]
+        return weights
+
+    def fit(self, initial_parameters, data, weights=None):
+        r = scipy.optimize.minimize(self._maximum_likelihood_loss, initial_parameters, args=(data, self._get_weights(weights, data)), method=self.method)
+        return r
+
+
 class LambdaReplacement():
     def __init__(self, dictionary_or_value, parameter=None):
         if parameter is None:
@@ -53,6 +81,15 @@ def _empiric_cdf(x, data):
     return len(data[data < x]) / len(data)
 
 
+class ParameterMapping(object):
+    def __init__(self, free_parameter_names):
+        self.free_parameter_names = free_parameter_names
+
+    def __call__(self, free_parameter_values):
+        NotImplemented
+        return [{name: value for zip(self.free_parameter_names, free_parameter_values)}]
+
+
 class Model(object):
     def __init__(self, name):
         self.name = name
@@ -67,31 +104,35 @@ class Model(object):
     
     @property
     def frozen_distribution(self):
+        self._sanitize_norms()
         return stats.rv_mixture(list(zip(self.names, self.distributions)), name=self.name)(**self.parameters)
     
     @property
     def norm(self):
+        self._sanitize_norms()
         return np.sum([self.parameters['{}_norm'.format(name)] for name in self.names])
 
     def __iter__(self):
         return iter(dict(zip(self.names, self.distributions)))
 
     def add_component(self, name, distribution, norm, loc=None, scale=None, **parameters):
-         if name in self.names:
-             raise RuntimeError("Another component with the same name was already added: " + name)
-         self.names.append(name)
-         self.distributions.append(distribution)
-         self.parameters['{}_norm'.format(name)] = norm
-         self.parameters['{}_loc'.format(name)] = loc
-         self.parameters['{}_scale'.format(name)] = scale
-         for key, value in parameters.items():
-             self.parameters['{}_{}'.format(name, key)] = value
-         if loc is None:
-             self.add_constraint('{}_loc'.format(name), LambdaReplacement(0.0))
-         if scale is None:
-             self.add_constraint('{}_scale'.format(name), LambdaReplacement(1.0))
+        if name in self.names:
+            raise RuntimeError("Another component with the same name was already added: " + name)
+        self.names.append(name)
+        self.distributions.append(distribution)
+        self.parameters['{}_norm'.format(name)] = norm
+        self.parameters['{}_loc'.format(name)] = loc
+        self.parameters['{}_scale'.format(name)] = scale
+        for key, value in parameters.items():
+            self.parameters['{}_{}'.format(name, key)] = value
+        if loc is None:
+            self.add_constraint('{}_loc'.format(name), LambdaReplacement(0.0))
+        if scale is None:
+            self.add_constraint('{}_scale'.format(name), LambdaReplacement(1.0))
+        self._sanitize_norms()
 
     def get_frozen_components(self):
+        self._sanitize_norms()
         for name, distribution in zip(self.names, self.distributions):
             shapes = [self.parameters['{}_{}'.format(name, s)] for s in stats._get_shape_parameters(distribution)]
             yield name, self.parameters['{}_norm'.format(name)], distribution(*shapes)
@@ -104,26 +145,22 @@ class Model(object):
                 print("WARNING: Setting an unkown parameter {}".format(parameter))
         for parameter, function in self.constraints:
             self.parameters[parameter] = function(self.parameters)
-
-    def add_constraint(self, parameter, function):
-        if parameter not in self.parameters:
-            print("WARNING: Adding constraint for {} but this parameter is not in the model".format(parameter))
-        self.constraints = [(key, value) for key, value in self.constraints if key != parameter]
-        self.constraints.append((parameter, function))
-        self.set_parameters(**{parameter: function(self.parameters)})
-
-    def fix_parameter(self, parameter):
-        self.constraints = [(key, value) for key, value in self.constraints if key != parameter]
-        self.constraints = [(parameter, LambdaReplacement(self.parameters, parameter))] + self.constraints
-        self.set_parameters(**{parameter: self.parameters[parameter]})
+        self._sanitize_norms()
 
     def get_free_parameters(self):
+        self._sanitize_norms()
         fixed_parameters = [c[0] for c in self.constraints]
         return {parameter: value for parameter, value in self.parameters.items() if parameter not in fixed_parameters}
     
     def get_fixed_parameters(self):
+        self._sanitize_norms()
         fixed_parameters = [c[0] for c in self.constraints]
         return {parameter: value for parameter, value in self.parameters.items() if parameter in fixed_parameters}
+
+    def _sanitize_norms(self):
+        for name in self.names:
+            if self.parameters['{}_norm'.format(name)] < 0.0:
+                self.parameters['{}_norm'.format(name)] = 0.0
 
 
 def _likelihood_profile_task(args):
@@ -150,61 +187,31 @@ def _stability_test_task(args):
 
 
 class Fitter(object):
-    def __init__(self, loss='unbinned-maximum-likelihood', method='nelder-mead'):
-        if loss == 'unbinned-maximum-likelihood':
-            self.loss = self._unbinned_maximum_likelihood_loss
-        elif loss == 'extended-unbinned-maximum-likelihood':
-            self.loss = self._extended_unbinned_maximum_likelihood_loss
-        else:
-            raise RuntimeError("Unkown loss function named " + loss)
+    def __init__(self, mapping, distributions, method='nelder-mead'):
+        self.mapping = mapping
+        self.distributions = distributions
         self.method = method
 
-    def _get_current_parameters(self, free_parameters, fit_model):
-        parameters = {key: free_parameters[i] for i, key in enumerate(fit_model.get_free_parameters().keys())}
-        for parameter, function in fit_model.constraints:
-            if parameter in fit_model.parameters:
-                parameters[parameter] = function(parameters)
-        return parameters
+    def _maximum_likelihood_loss(self, free_parameters, data, weights):
+        loss = 0.0
+        parameters = mapping(free_parameters)
+        for d, w, p, distribution in zip(data, weights, parameters, self.distributions):
+            if '__normalisation__' in p:
+                N = np.sum(w)
+                average_number_of_events = p['__normalisation__'] * N
+                loss += - N * np.log(average_number_of_events) + average_number_of_events
+                del p['__normalisation__']
+            loss += -np.sum(w * np.log(distribution.pdf(d, **p)))
+        return loss
 
-    def _unbinned_maximum_likelihood_loss(self, free_parameters, data, fit_model, weights=None):
-        parameters = self._get_current_parameters(free_parameters, fit_model)
+    def _get_weights(weights):
         if weights is None:
-            weights = np.ones(len(data))
-        return -np.sum(weights * np.log(fit_model.distribution.pdf(data, **parameters)))
-    
-    def _extended_unbinned_maximum_likelihood_loss(self, free_parameters, data, fit_model, weights=None):
-        parameters = self._get_current_parameters(free_parameters, fit_model)
-        if weights is None:
-            weights = np.ones(len(data))
-        N = np.sum(weights)
-        average_number_of_events = np.sum([max(parameters['{}_norm'.format(name)], 0.0) for name in fit_model.names]) * N
-        return self._unbinned_maximum_likelihood_loss(free_parameters, data, fit_model, weights) - N * np.log(average_number_of_events) + average_number_of_events
+            weights = [np.ones(len(d)) for d in data]
+        return weights
 
-    def fit(self, fit_model, data, weights=None):
-        initial_parameters = np.array(list(fit_model.get_free_parameters().values()))
-        if len(initial_parameters) == 0:
-            parameters = {}
-            r = scipy.optimize.OptimizeResult(x=np.array([]), fun=self.loss(np.array([]), data, fit_model, weights), hessian=None, success=True, status=0)
-        else:
-            r = scipy.optimize.minimize(self.loss, initial_parameters, args=(data, fit_model, weights), method=self.method)
-            parameters = dict(zip(fit_model.get_free_parameters().keys(), r.x))
-        for parameter, function in fit_model.constraints:
-            parameters[parameter] = function(parameters)
-        return parameters, r
-
-    def likelihood_profile(self, fit_model, parameter_spaces, data, weights=None):
-        parameters = parameter_spaces.keys()
-        linspaces = parameter_spaces.values()
-        best_fit_parameters, _ = self.fit(fit_model, data, weights)
-        fit_model.set_parameters(**best_fit_parameters)
-
-        for parameter in parameters:
-            fit_model.fix_parameter(parameter)
-
-        #with Pool(processes=4) as pool:
-        arguments = list(zip(cycle([self]), cycle([parameters]), zip(*linspaces), cycle([fit_model]), cycle([data]), cycle([weights])))
-        results = list(map(_likelihood_profile_task, arguments))
-        return results
+    def fit(self, initial_parameters, data, weights=None):
+        r = scipy.optimize.minimize(self._maximum_likelihood_loss, initial_parameters, args=(data, self._get_weights(weights)), method=self.method)
+        return r
 
     def get_likelihood_uncertainty(self, parameters, a_opt, f_opt, fit_model, data, weights=None):
         """

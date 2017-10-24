@@ -8,7 +8,7 @@ from scipy.stats import rv_continuous
 import functools
 
 
-def _get_shape_parameters(distribution):
+def get_shape_parameters(distribution):
     """
     Returns all shape parameters of a scipy distribution
     including loc and scale
@@ -83,7 +83,7 @@ class rv_mixture(rv_continuous):
             self._distributions.append(distribution)
             self._components.append(component)
             self._distribution_norms.append('{}_norm'.format(component))
-            self._distribution_shapes.append(['{}_{}'.format(component, s) for s in _get_shape_parameters(distribution)])
+            self._distribution_shapes.append(['{}_{}'.format(component, s) for s in get_shape_parameters(distribution)])
         kwargs['shapes'] = ', '.join(sum(self._distribution_shapes, self._distribution_norms))
         super(rv_mixture, self).__init__(*args, **kwargs)
 
