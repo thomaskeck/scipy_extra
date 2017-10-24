@@ -6,65 +6,80 @@ import scipy.stats
 import matplotlib.pyplot as plt
 
 import scipy_extra.fit
+import scipy_extra.stats
 
 
-def plot_data_and_model(title, data, fit_model, extended=False):
+def plot_data_and_model(title, data, frozen_distribution, normalisation):
     plt.title(title)
-    if extended:
-        plt.hist(data, bins=100, range=(-3, 3), weights=np.ones(len(data)) * 100.0/6.0)
-    else:
-        plt.hist(data, bins=100, range=(-3, 3), normed=True)
-    plt.plot(X, fit_model.norm * fit_model.frozen_distribution.pdf(X), label=fit_model.name)
-    for name, norm, distribution in fit_model.get_frozen_components():
-        plt.plot(X, norm * distribution.pdf(X), label=name)
-    plt.legend()
+    binning = dict(range=(-3, 3), bins=100)
+    space = np.linspace(*binning['range'], binning['bins']*10)
+    content, boundaries = np.histogram(data, **binning)
+    plt.errorbar((boundaries[1:] + boundaries[:-1]) / 2, content, yerr=np.sqrt(content), color='black', fmt='s', markersize=8, label='Data', zorder=3)
+    
+    weight = len(data) / binning['bins'] * (binning['range'][1] - binning['range'][0])
+
+    plt.fill_between(space, weight * normalisation(frozen_distribution.kwds) * frozen_distribution.pdf(space), label='Fit', color='gray')
+    for name, distribution, norm_name, shape_names in zip(frozen_distribution.dist._components,
+                                                          frozen_distribution.dist._distributions,
+                                                          frozen_distribution.dist._distribution_norms,
+                                                          frozen_distribution.dist._distribution_shapes):
+        norm = frozen_distribution.kwds[norm_name]
+        shapes = {'_'.join(k.split('_')[1:]) : frozen_distribution.kwds[k] for k in shape_names}
+        plt.plot(space, weight * norm * distribution.pdf(space, **shapes), label=name)
+    plt.legend(bbox_to_anchor=(1.0, 1.0))
+    plt.xlim(binning['range'])
     plt.show()
 
 
 if __name__ == '__main__':
-    X = np.linspace(-3, 3, 1000)
 
-    fit_model = scipy_extra.fit.Model('MyFitModel')
-    fit_model.add_component('signal', scipy.stats.norm, loc=0.3, scale=0.5, norm=0.2)
-    fit_model.add_component('background', scipy.stats.norm, loc=0.7, scale=1.0, norm=0.3)
+    continuum_hist = np.histogram(scipy.stats.norm.rvs(size=100000, loc=0, scale=1.5), bins=100)
+    distribution = scipy_extra.stats.rv_mixture([('signal', scipy.stats.norm),
+                                                 ('background', scipy.stats.norm),
+                                                 ('continuum', scipy.stats.rv_histogram(continuum_hist))])
 
-    continuum_binned = np.histogram(scipy.stats.norm.rvs(size=100000, loc=0, scale=1.5), bins=100)
-    fit_model.add_component('continuum', scipy.stats.rv_histogram(continuum_binned), norm=0.5)
-    
-    fit_model.fix_parameter('signal_scale')
-    fit_model.fix_parameter('background_scale')
+    def mapping(free_parameters):
+        return dict(signal_loc=free_parameters[0],
+                    signal_scale=0.5,
+                    signal_norm=free_parameters[1],
+                    background_loc=free_parameters[2],
+                    background_scale=1.0,
+                    background_norm=free_parameters[3],
+                    continuum_loc=0.0,
+                    continuum_scale=1.0,
+                    continuum_norm=free_parameters[4])
 
-    data = fit_model.frozen_distribution.rvs(size=10000)
-    plot_data_and_model("Model with true parameters", data, fit_model)
-    print(fit_model.parameters)
+    def normalisation(parameters):
+        return parameters['signal_norm'] + parameters['background_norm'] + parameters['continuum_norm']
 
-    fit_model.set_parameters(signal_loc=0.5, background_loc=0.5, signal_norm=0.4, background_norm=0.3, continuum_norm=0.3)
-    plot_data_and_model("Model Before Fit", data, fit_model)
+    fitter = scipy_extra.fit.Fitter(mapping, distribution, normalisation=normalisation)
 
-    fitter = scipy_extra.fit.Fitter(loss='extended-unbinned-maximum-likelihood')
-    #fitter = scipy_extra.fit.Fitter(loss='unbinned-maximum-likelihood')
-    result, r = fitter.fit(fit_model, data)
-    print("Raw scipy result", r)
-    print("Result parameters", result)
-    fit_model.set_parameters(**result)
-    
-    plot_data_and_model("Model After Fit", data, fit_model)
-  
-    signal_yield_generated = np.linspace(0.01, 0.5, 20)
-    likelihood = fitter.likelihood_profile(fit_model, {'signal_norm': signal_yield_generated}, data)
-    plt.title("Likelihood Profile")
-    plt.xlabel("Generated Signal Yield")
-    plt.ylabel("- Log Likelihood")
-    plt.plot(signal_yield_generated, likelihood)
-    plt.show()
+    true_parameters = [0.4, 0.2, 0.6, 0.6, 0.2]
+    initial_parameters = [0.1, 0.1, 0.6, 0.3, 0.6]
+    data = distribution.rvs(size=10000, **mapping(true_parameters))
 
-    signal_yield_fitted = fitter.stability_test(fit_model, {'signal_norm': signal_yield_generated})['signal_norm']
-    plt.title("Stability test")
-    plt.xlabel("Generated Signal Yield")
-    plt.ylabel("Fitted Signal Yield")
-    plt.plot(signal_yield_generated, signal_yield_fitted)
-    plt.plot([0.0, 1.0], [0.0, 1.0])
-    plt.show()
-    print(signal_yield_generated)
-    print(signal_yield_fitted)
+    r = fitter.fit(initial_parameters, data)
+    print("Result")
+    print(r)
+
+    uncertainties = fitter.get_uncertainties([0,3,4], [[0.0, 1.0]]*3, data)
+    print("Uncertainties")
+    print(uncertainties)
+
+    significance = fitter.get_significance([0], [0.0], data)
+    print("Significance")
+    print(significance)
+
+    def true_parameters_generator():
+        for x in np.linspace(0, 1, 10):
+            yield true_parameters[:1] + [x] + true_parameters[2:]
+    result = fitter.stability_test(initial_parameters, true_parameters_generator(), 10000)
+    print("Stability Test")
+    for generated, fitted in zip(true_parameters_generator(), result):
+        print(generated[1], fitted.x[1])
+   
+    print("Plotting")
+    plot_data_and_model("Model with true parameters", data, distribution(**mapping(true_parameters)), normalisation)
+    plot_data_and_model("Model with initial parameters", data, distribution(**mapping(initial_parameters)), normalisation)
+    plot_data_and_model("Model with fitted parameters", data, distribution(**mapping(r.x)), normalisation)
 

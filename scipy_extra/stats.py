@@ -122,7 +122,6 @@ class rv_mixture(rv_continuous):
         with a probability given by their individual norm factors
         """
         norm_values, shape_values = self._extract_positional_arguments(args)
-
         choices = self._random_state.choice(len(norm_values), size=self._size, p=norm_values)
         result = np.zeros(self._size)
         for i, (distribution, shape) in enumerate(zip(self._distributions, shape_values)):
@@ -165,7 +164,7 @@ class rv_support(rv_continuous):
 
     data = scipy.stats.norm.rvs(size=100000, loc=0, scale=1.5)
     hist = np.histogram(data, bins=100)
-    template = scipy_extra.stats.template_gen(hist)
+    template = scipy.stats.rv_histogram(hist)
 
     """
 
