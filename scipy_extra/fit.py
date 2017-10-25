@@ -7,7 +7,26 @@ import functools
 
 
 class Fitter(object):
+    """
+    Implements extended unbinned maximum likelihood fits for scipy.stats distributions.
+    The distribution has to be implemented completly using scipy.stats distributions.
+    A mapping function has to be provided, which maps the free parameters of the fit to the scipy.stats shape parameters.
+    The fit itself is performed using scipy.optimize.
+    """
     def __init__(self, mapping, distributions, normalisation=None, method='nelder-mead', ugly_and_fast=False):
+        """
+        Parameters
+        ----------
+        mapping : user-defined function, which maps the free parameters to the shape parameters of the distribution.
+                  For a one-dimensional fit the function maps np.array(free-parameters) -> dict(shape parameters)
+                  For a multi-dimenional fit the function maps np.array(free-parameters) -> list of dict(shape parameters) for each distribution.
+        distributions : A scipy.stats distribution (implies a one-dimensional fit) or a list of scipy.stats distributions (implies a multi-dimensional fit).
+        normalisation : user-defined function, which maps the shape parameters of a distribution (returned by the mapping) to the overall norm of the distribution.
+                        If None is given, the norm 1.0 is assumed, which reduced the fit to an unbinned M.L fit, instead of a extended unbinned M.L fit.
+        method : The method passed to scipy.optimize.minimize
+        ugly_and_fast : If true, the calculation of the uncertainty and likelihood profile will speed-up, but loose accuracy.
+                        This is achieved by just evaluating the loss-function with the optimal-parameters, instead of fitting all parameters again.
+        """
         self.is_multi_dimensional = isinstance(distributions, collections.Sequence)
         self.mapping = mapping if self.is_multi_dimensional else lambda p: [mapping(p)]
         self.distributions = distributions if self.is_multi_dimensional else [distributions]
@@ -17,14 +36,18 @@ class Fitter(object):
         self.r = None
 
     def loss(self, free_parameters, data, weights, mapping):
+        """
+        Calculates the extended unbinned maximum likelihood fit.
+        It is assumed that the pdf of the distributions is normed (integral over the whole range is one).
+        """
         loss = 0.0 
         parameters = mapping(free_parameters)
         for d, w, p, distribution in zip(data, weights, parameters, self.distributions):
-            if self.normalisation is not None:
-                N = np.sum(w)
-                average_number_of_events = self.normalisation(p) * N
-                loss += - N * np.log(average_number_of_events) + average_number_of_events
-            loss += -np.sum(w * np.log(distribution.pdf(d, **p)))
+            N = np.sum(w)
+            norm = 1.0 if self.normalisation is None else self.normalisation(p)
+            average_number_of_events = norm * N
+            loss += - N * np.log(average_number_of_events) + average_number_of_events
+            loss += - np.sum(w * np.log(distribution.pdf(d, **p)))
         return loss
 
     def _ensure_dimension(self, data, weights):

@@ -171,9 +171,11 @@ class rv_support(rv_continuous):
     def __init__(self, distribution, low, high, *args, **kwargs):
         """
         Create a new distribution using the given distribution
-        @param a scipy.stats distribution
-        @param low lower limit of the support
-        @param high higher limit of the support
+        Parameters
+        ----------
+        distribution : a scipy.stats distribution
+        low : lower limit of the support
+        high : higher limit of the support
         """
         self.distribution = distribution
         self.low = low
@@ -240,6 +242,9 @@ class chebyshev_gen(rv_continuous):
     """
     def __init__(self, degree, *args, **kwargs):
         """
+        Parameters
+        ----------
+        degree : the degree of the chebyshev polynom as integer
         """
         self.degree = degree
         kwargs['shapes'] = ', '.join(['a_{}'.format(i) for i in range(self.degree + 1)])
