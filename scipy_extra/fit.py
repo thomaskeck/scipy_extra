@@ -9,8 +9,9 @@ import functools
 class Fitter(object):
     """
     Implements extended unbinned maximum likelihood fits for scipy.stats distributions.
-    The distribution has to be implemented completly using scipy.stats distributions.
+    The distribution has to be implemented completely using scipy.stats distributions.
     A mapping function has to be provided, which maps the free parameters of the fit to the scipy.stats shape parameters.
+    An optional normalisation function can be provided, which maps the shape parameters of each distribution to its overall normalisation.
     The fit itself is performed using scipy.optimize.
     """
     def __init__(self, mapping, distributions, normalisation=None, method='nelder-mead', ugly_and_fast=False):
@@ -39,6 +40,13 @@ class Fitter(object):
         """
         Calculates the extended unbinned maximum likelihood fit.
         It is assumed that the pdf of the distributions is normed (integral over the whole range is one).
+
+        Parameters
+        ----------
+        free_parameters : sequence containing the free parameters of the fit
+        data : list of numpy array containing the data for each distribution
+        weights : list of numpy array containing the weights for each distribution
+        mapping : the mapping which maps the free parameters to the shape parameters for each distribution
         """
         loss = 0.0 
         parameters = mapping(free_parameters)
@@ -51,6 +59,12 @@ class Fitter(object):
         return loss
 
     def _ensure_dimension(self, data, weights):
+        """
+        Ensures that the data and weights are list of numpy arrays.
+        If the fit is not multi-dimensional the user passed a single numpy-array instead of a list 
+        for the data and weights array. We wrap this here in a list.
+        If the user did not provide a weights numpy-array, we assume a weight of one for each event.
+        """
         if not self.is_multi_dimensional:
             data = [data]
         if not self.is_multi_dimensional:
@@ -61,14 +75,19 @@ class Fitter(object):
         return data, weights
 
     def _fit(self, initial_parameters, data, weights, mapping):
+        """
+        Internal method of the class
+        Performs the fit without transforming the data and weights into the correct format, because the other methods
+        which call this function have already done this.
+        """
         r = scipy.optimize.minimize(self.loss, initial_parameters, args=(data, weights, mapping), method=self.method)
         return r
 
-    def fit(self, initial_parameters, data, weights=None):
-        self.r = self._fit(initial_parameters, *self._ensure_dimension(data, weights), self.mapping)
-        return self.r
-
     def _get_likelihood_profile_function(self, optimal_parameters, fixed):
+        """
+        Internal method of the class.
+        Returns the likelihood profile function based on the "ugly_and_fast" parameter.
+        """
         optimal_parameters_without_fixed = [p for i, p in enumerate(optimal_parameters) if i not in fixed]
         insert_fixed_parameters = lambda p, f: functools.reduce(lambda l, i: l[:i[1]] + [f[i[0]]] + l[i[1]:], enumerate(fixed), list(p))
         if self.ugly_and_fast:
@@ -76,70 +95,136 @@ class Fitter(object):
         else:
             return lambda x, data, weights: self._fit(optimal_parameters_without_fixed, data, weights, lambda p: self.mapping(np.array(insert_fixed_parameters(p, x)))).fun
     
-    def get_uncertainties(self, parameter_positions, parameter_boundaries, data, weights=None):
+    def fit(self, initial_parameters, data, weights=None):
+        """
+        Fits the distributions to the passed data using the given initial parmameters as starting point for the optimization.
+
+        Parameters
+        ----------
+        initial_parameters : sequence containing the initial guess for the free parmameters of the fit
+        data : numpy-array or list of numpy-array containing the data
+        weights : numpy-array or list of numpy-array containing the weights. If None is passed a weight of one is assumed for each event.
+        """
+        self.r = self._fit(initial_parameters, *self._ensure_dimension(data, weights), self.mapping)
+        return self.r
+    
+    def get_uncertainties(self, parameter_boundaries, data, weights=None):
+        """
+        Returns the uncertainty of free parameters calculated from the likelihood profile.
+        You have to call fit before calling this function
+
+        Parameters
+        ----------
+        parameter_boundaries : list of 2-float-tuple containing the lower and upper boundary of the free parameters.
+                               If None is passed for a free parameters instead of the tuple its uncertainty is not calculated
+        data : numpy-array or list of numpy-array containing the data
+        weights : numpy-array or list of numpy-array containing the weights. 
+                  If None is passed a weight of one is assumed for each event.
+        """
         if self.r is None:
             raise RuntimeError("Please call fit first")
+        if len(parameter_boundaries) != len(self.r.x):
+            raise RuntimeError("The number of provided boundaries does not match the number of fitted parameters")
         data, weights = self._ensure_dimension(data, weights)
         uncertainties = []
-        for i, (lower_boundary, upper_boundary) in zip(parameter_positions, parameter_boundaries):
-            likelihood_profile_function = self._get_likelihood_profile_function(list(self.r.x), [i])
-            lower = None if lower_boundary is None else scipy.optimize.brentq(lambda x: likelihood_profile_function([x], data, weights) - (self.r.fun + 0.5), lower_boundary, self.r.x[i])
-            upper = None if upper_boundary is None else scipy.optimize.brentq(lambda x: likelihood_profile_function([x], data, weights) - (self.r.fun + 0.5), self.r.x[i], upper_boundary)
-            uncertainties.append([lower, upper])
+        for i, boundaries in enumerate(parameter_boundaries):
+            if boundaries is None:
+                uncertainties.append([None, None])
+            else:
+                lower_boundary, upper_boundary = boundaries
+                likelihood_profile_function = self._get_likelihood_profile_function(list(self.r.x), [i])
+                lower = lower_boundary
+                upper = upper_boundary
+                if lower_boundary is not None:
+                    try:
+                        lower = scipy.optimize.brentq(lambda x: likelihood_profile_function([x], data, weights) - (self.r.fun + 0.5), lower_boundary, self.r.x[i])
+                    except ValueError:
+                        print("Could not find a valid lower boundary. Setting lower boundary to the given boundary.")
+                        pass
+                if upper_boundary is not None:
+                    try:
+                        upper = scipy.optimize.brentq(lambda x: likelihood_profile_function([x], data, weights) - (self.r.fun + 0.5), self.r.x[i], upper_boundary)
+                    except ValueError:
+                        print("Could not find a valid upper boundary. Setting upper boundary to the given boundary.")
+                        pass
+                uncertainties.append([lower, upper])
         return uncertainties
     
-    def likelihood_profile(self, parameter_positions, parameters_generator, data, weights=None):
+    def likelihood_profile(self, parameter_values, data, weights=None):
+        """
+        Returns the likelihood profile of free parameters.
+        You have to call fit before calling this function
+
+        Parameters
+        ----------
+        parameter_values : list of numpy-array containing fixed values for the free parameters.
+                           If None is passed instead of a numpy-array the corresponding parameter won't be fixed during the profile fit.
+        data : numpy-array or list of numpy-array containing the data
+        weights : numpy-array or list of numpy-array containing the weights. If None is passed a weight of one is assumed for each event.
+        """
         if self.r is None:
             raise RuntimeError("Please call fit first")
+        if len(parameter_values) != len(self.r.x):
+            raise RuntimeError("The number of provided values does not match the number of fitted parameters")
         data, weights = self._ensure_dimension(data, weights)
+        parameter_positions = [i for i, v in enumerate(parameter_values) if v is not None]
         likelihood_profile_function = self._get_likelihood_profile_function(list(self.r.x), parameter_positions)
-        return np.array([likelihood_profile_function(parameter_values, data, weights) for parameter_values in parameters_generator])
+        return np.array([likelihood_profile_function(list(parameters), data, weights) for parameters in zip(*[v for v in parameter_values if v is not None])])
 
-    def stability_test(self, initial_parameters, true_parameters_generator, size):
+    def toy(self, initial_parameters, true_parameters, sample_size, parameter_boundaries=None):
+        """
+        Performs toy fits by drawning fake data from the distributions given its true values.
+        You can use this to perform
+         - a stability test of the fit (by passing different values for the true parameters)
+         - get the pull distribution of the fit (by passing the same value for the true parameters several times)
+
+        Parameters
+        ----------
+        initial_parameters : sequence containing the initial guess for the free parmameters of the fit
+        true_parameter : list of numpy-array containing true values for the free parameters.
+        sample_size : number of samples drawn from the distribution for each experiment
+        parameter_boundaries : If not None the uncertainty of the parameters is calculated (this can take some time!)
+                               list of 2-float-tuple containing the lower and upper boundary of the free parameters.
+                               If None is passed for a free parameters instead of the tuple its uncertainty is not calculated.
+        """
         result = []
-        for true_parameters in true_parameters_generator:
-            parameters = self.mapping(true_parameters)
+        for true_parameter in true_parameters:
+            parameters = self.mapping(true_parameter)
             data = []
             for p, distribution in zip(parameters, self.distributions):
-                data.append(distribution.rvs(size=size, **p))
+                data.append(distribution.rvs(size=sample_size, **p))
             weights = [np.ones(len(d)) for d in data]
             r = self._fit(initial_parameters, data, weights, self.mapping)
-            result.append(r)
+            if parameter_boundaries is None:
+                uncertainties = None
+            else:
+                # Save cached result from user-fit
+                old_ugly_and_fast = self.ugly_and_fast
+                old_r = self.r
+                self.r = r
+                #self.ugly_and_fast = True
+                uncertainties = self.get_uncertainties(parameter_boundaries, data, weights)
+                self.r = old_r
+                self.ugly_and_fast = old_ugly_and_fast
+            result.append((true_parameter, r, uncertainties))
         return result
     
-    def get_significance(self, parameter_positions, parameter_values, data, weights=None):
+    def get_significance(self, parameter_values, data, weights=None):
+        """
+        Returns the significance of free parameters with respect to a null-hypothesis
+        You have to call fit before calling this function
+
+        Parameters
+        ----------
+        parameter_values : sequence containing fixed values for the free parameters under the null-hypothesis.
+                           If None is passed for a parameter the corresponding parameter will be fitted.
+        data : numpy-array or list of numpy-array containing the data
+        weights : numpy-array or list of numpy-array containing the weights. If None is passed a weight of one is assumed for each event.
+        """
         if self.r is None:
             raise RuntimeError("Please call fit first")
         data, weights = self._ensure_dimension(data, weights)
+        parameter_positions = [i for i, v in enumerate(parameter_values) if v is not None]
         likelihood_profile_function = self._get_likelihood_profile_function(list(self.r.x), parameter_positions)
-        n = likelihood_profile_function(parameter_values, data, weights)
+        n = likelihood_profile_function([v for v in parameter_values if v is not None], data, weights)
         return np.sqrt(2*(n-self.r.fun))
-
-
-def template_test(fit_model, sample, x_range=(-2, 4)):
-    """
-    Performs Kolmogorov-Test to compare a datasamples with distributions of fit-model components
-    @param fit_model: scipy_extra Fit-Model
-    @param sample: Sample object. For every component of fit-model there is a pandas dataframe in sample
-    @param x_range:
-    @return:
-    """
-    kolmorogov = {}
-    X = np.linspace(x_range[0], x_range[1], 300)
-    for name, _, distribution in fit_model.get_frozen_components():
-        df = getattr(sample, name)
-        if len(df) == 0:
-            kolmorogov[name] = (0, 0)
-            continue
-        d = max(abs(_empiric_cdf(x, df) - distribution.cdf(x)) for x in X)
-        p = 0
-        for i in range(1, 1000):
-            p += -1**(i - 1) * np.exp(-2 * i**2 * (np.sqrt(len(df)) * d)**2)
-        p *= 2
-        kolmorogov[name] = (p, d)
-    return kolmorogov
-
-
-def _empiric_cdf(x, data):
-    return len(data[data < x]) / len(data)
-
