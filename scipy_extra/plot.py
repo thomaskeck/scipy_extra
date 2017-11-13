@@ -97,7 +97,7 @@ def stability(fitter, toy_experiments, i):
         fitted_std.append(group[:,1].std())
         fitted_mean_error.append(group[:,1].std() / np.sqrt(len(group)))
 
-    plt.errorbar(true_values, fitted_mean, yerr=fitted_std, fmt='', ls='')
+    #plt.errorbar(true_values, fitted_mean, yerr=fitted_std, fmt='', ls='')
     plt.errorbar(true_values, fitted_mean, yerr=fitted_mean_error, fmt='s', markersize=8, ls='')
     plt.xlabel('True Value')
     plt.ylabel('Fitted Value')

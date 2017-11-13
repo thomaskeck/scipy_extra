@@ -14,7 +14,7 @@ class Fitter(object):
     An optional normalisation function can be provided, which maps the shape parameters of each distribution to its overall normalisation.
     The fit itself is performed using scipy.optimize.
     """
-    def __init__(self, mapping, distributions, normalisation=None, method='nelder-mead', ugly_and_fast=False):
+    def __init__(self, mapping, distributions, normalisation=None, prior=None, method='nelder-mead', ugly_and_fast=False):
         """
         Parameters
         ----------
@@ -24,6 +24,7 @@ class Fitter(object):
         distributions : A scipy.stats distribution (implies a one-dimensional fit) or a list of scipy.stats distributions (implies a multi-dimensional fit).
         normalisation : user-defined function, which maps the shape parameters of a distribution (returned by the mapping) to the overall norm of the distribution.
                         If None is given, the norm 1.0 is assumed, which reduced the fit to an unbinned M.L fit, instead of a extended unbinned M.L fit.
+        prior : user-defined function, which maps the shape parameters of all distributions to a prior.
         method : The method passed to scipy.optimize.minimize
         ugly_and_fast : If true, the calculation of the uncertainty and likelihood profile will speed-up, but loose accuracy.
                         This is achieved by just evaluating the loss-function with the optimal-parameters, instead of fitting all parameters again.
@@ -32,6 +33,7 @@ class Fitter(object):
         self.mapping = mapping if self.is_multi_dimensional else lambda p: [mapping(p)]
         self.distributions = distributions if self.is_multi_dimensional else [distributions]
         self.method = method
+        self.prior = prior if self.is_multi_dimensional else lambda p: prior(p[0])
         self.normalisation = normalisation
         self.ugly_and_fast = ugly_and_fast
         self.r = None
@@ -56,6 +58,8 @@ class Fitter(object):
             average_number_of_events = norm * N
             loss += - N * np.log(average_number_of_events) + average_number_of_events
             loss += - np.sum(w * np.log(distribution.pdf(d, **p)))
+        if self.prior is not None:
+            loss += - np.log(self.prior(parameters))
         return loss
 
     def _ensure_dimension(self, data, weights):
@@ -192,20 +196,18 @@ class Fitter(object):
             parameters = self.mapping(true_parameter)
             data = []
             for p, distribution in zip(parameters, self.distributions):
-                data.append(distribution.rvs(size=sample_size, **p))
+                data.append(distribution.rvs(size=np.random.poisson(sample_size), **p))
             weights = [np.ones(len(d)) for d in data]
             r = self._fit(initial_parameters, data, weights, self.mapping)
             if parameter_boundaries is None:
                 uncertainties = None
             else:
                 # Save cached result from user-fit
-                old_ugly_and_fast = self.ugly_and_fast
                 old_r = self.r
                 self.r = r
                 #self.ugly_and_fast = True
                 uncertainties = self.get_uncertainties(parameter_boundaries, data, weights)
                 self.r = old_r
-                self.ugly_and_fast = old_ugly_and_fast
             result.append((true_parameter, r, uncertainties))
         return result
     
