@@ -33,7 +33,7 @@ class Fitter(object):
         self.mapping = mapping if self.is_multi_dimensional else lambda p: [mapping(p)]
         self.distributions = distributions if self.is_multi_dimensional else [distributions]
         self.method = method
-        self.prior = prior if self.is_multi_dimensional else lambda p: prior(p[0])
+        self.prior = prior if self.is_multi_dimensional or prior is None else lambda p: prior(p[0])
         self.normalisation = normalisation
         self.ugly_and_fast = ugly_and_fast
         self.r = None
@@ -175,7 +175,7 @@ class Fitter(object):
         likelihood_profile_function = self._get_likelihood_profile_function(list(self.r.x), parameter_positions)
         return np.array([likelihood_profile_function(list(parameters), data, weights) for parameters in zip(*[v for v in parameter_values if v is not None])])
 
-    def toy(self, initial_parameters, true_parameters, sample_size, parameter_boundaries=None):
+    def toy(self, initial_parameters, true_parameters, sample_sizes, parameter_boundaries=None):
         """
         Performs toy fits by drawning fake data from the distributions given its true values.
         You can use this to perform
@@ -186,17 +186,21 @@ class Fitter(object):
         ----------
         initial_parameters : sequence containing the initial guess for the free parmameters of the fit
         true_parameter : list of numpy-array containing true values for the free parameters.
-        sample_size : number of samples drawn from the distribution for each experiment
+        sample_sizes : list of integers or integer containing the number of samples drawn from the distribution for each experiment
         parameter_boundaries : If not None the uncertainty of the parameters is calculated (this can take some time!)
                                list of 2-float-tuple containing the lower and upper boundary of the free parameters.
                                If None is passed for a free parameters instead of the tuple its uncertainty is not calculated.
         """
+        if not self.is_multi_dimensional:
+            sample_sizes = [sample_sizes]
         result = []
-        for true_parameter in true_parameters:
+        for i, true_parameter in enumerate(true_parameters):
+            if i % 10 == 0:
+                print(i)
             parameters = self.mapping(true_parameter)
             data = []
-            for p, distribution in zip(parameters, self.distributions):
-                data.append(distribution.rvs(size=np.random.poisson(sample_size), **p))
+            for p, distribution, s in zip(parameters, self.distributions, sample_sizes):
+                data.append(distribution.rvs(size=np.random.poisson(s), **p))
             weights = [np.ones(len(d)) for d in data]
             r = self._fit(initial_parameters, data, weights, self.mapping)
             if parameter_boundaries is None:
