@@ -8,13 +8,14 @@ import functools
 
 class Fitter(object):
     """
-    Implements extended unbinned maximum likelihood fits for scipy.stats distributions.
+    Implements maximum likelihood fits for scipy.stats distributions.
     The distribution has to be implemented completely using scipy.stats distributions.
     A mapping function has to be provided, which maps the free parameters of the fit to the scipy.stats shape parameters.
     An optional normalisation function can be provided, which maps the shape parameters of each distribution to its overall normalisation.
+    An optinal binning can be provided to bin the initial data and to perform a binned ML fit instead of an unbinned.
     The fit itself is performed using scipy.optimize.
     """
-    def __init__(self, mapping, distributions, normalisation=None, prior=None, method='nelder-mead', ugly_and_fast=False):
+    def __init__(self, mapping, distributions, normalisation=None, binnings=None, prior=None, method='nelder-mead', ugly_and_fast=False):
         """
         Parameters
         ----------
@@ -24,6 +25,9 @@ class Fitter(object):
         distributions : A scipy.stats distribution (implies a one-dimensional fit) or a list of scipy.stats distributions (implies a multi-dimensional fit).
         normalisation : user-defined function, which maps the shape parameters of a distribution (returned by the mapping) to the overall norm of the distribution.
                         If None is given, the norm 1.0 is assumed, which reduced the fit to an unbinned M.L fit, instead of a extended unbinned M.L fit.
+                        For binned ML fits the normalisation is important, otherwise the overall normalisation may be off.
+        binning : A binning (a dict passed to np.histogram as keyword arguments) (in case of a one-dimensional fit) or a list of binnings (in case of a multi-dimensional fit)
+                   If None is given an unbinned maximum likelihood fit is performed, otherwise a binned maximum likelihood fit is performed
         prior : user-defined function, which maps the shape parameters of all distributions to a prior.
         method : The method passed to scipy.optimize.minimize
         ugly_and_fast : If true, the calculation of the uncertainty and likelihood profile will speed-up, but loose accuracy.
@@ -34,13 +38,19 @@ class Fitter(object):
         self.distributions = distributions if self.is_multi_dimensional else [distributions]
         self.method = method
         self.prior = prior if self.is_multi_dimensional or prior is None else lambda p: prior(p[0])
-        self.normalisation = normalisation
+        self.normalisation = normalisation if normalisation is not None else lambda p: 1.0
+        if binnings is None:
+            self.binnings = [None] * len(self.distributions)
+            self.bin_edges = [None] * len(self.distributions)
+        else:
+            self.binnings = binnings if self.is_multi_dimensional else [binnings]
+            self.bin_edges = None # Set to None so that it fails if bin_edges should ever be used uninitialized
         self.ugly_and_fast = ugly_and_fast
         self.r = None
 
     def loss(self, free_parameters, data, weights, mapping):
         """
-        Calculates the extended unbinned maximum likelihood fit.
+        Calculates the maximum likelihood fit.
         It is assumed that the pdf of the distributions is normed (integral over the whole range is one).
 
         Parameters
@@ -52,12 +62,23 @@ class Fitter(object):
         """
         loss = 0.0 
         parameters = mapping(free_parameters)
-        for d, w, p, distribution in zip(data, weights, parameters, self.distributions):
-            N = np.sum(w)
-            norm = 1.0 if self.normalisation is None else self.normalisation(p)
-            average_number_of_events = norm * N
-            loss += - N * np.log(average_number_of_events) + average_number_of_events
-            loss += - np.sum(w * np.log(distribution.pdf(d, **p)))
+        for d, w, p, distribution, binning in zip(data, weights, parameters, self.distributions, self.bin_edges):
+            if binning is None:
+                # The next line sets the expected number of events to the given number of events
+                # this is not completely correct and we should probably use the user-defined normalisation function
+                # to obtain a proper estimate of the expected number of events, which is an independent piece of information we don't have
+                N = np.sum(w)
+                average_number_of_events = self.normalisation(p) * N
+                loss += - N * np.log(average_number_of_events) + average_number_of_events
+                loss += - np.sum(w * np.log(distribution.pdf(d, **p)))
+            else:
+                # The next line sets the expected number of events to the given number of events
+                # this is not completely correct and we should probably use the user-defined normalisation function
+                # to obtain a proper estimate of the expected number of events, which is an independent piece of information we don't have
+                N = np.sum(d)
+                cdfs = distribution.cdf(binning, **p)
+                mus = (cdfs[1:] - cdfs[:-1]) * N * self.normalisation(p)
+                loss += - np.sum(w * (d * np.log(mus) - mus))
         if self.prior is not None:
             loss += - np.log(self.prior(parameters))
         return loss
@@ -77,6 +98,29 @@ class Fitter(object):
         if weights is None:
             weights = [np.ones(len(d)) for d in data]
         return data, weights
+
+    def _bin_data_if_necessary(self, data, weights):
+        """
+        Bins the data if necessary.
+        The data is binned using the binning provided by the user.
+        The bin edges are remembered internally and are reused in the fit function.
+        The weights are set to one for each bin (in the future one could increase the weight of individual bins!)
+        """
+        self.bin_edges = []
+        maybe_binned_data = []
+        maybe_binned_weights = []
+        for d, w, binning in zip(data, weights, self.binnings):
+            if binning is None:
+                maybe_binned_data.append(d)
+                maybe_binned_weights.append(w)
+                self.bin_edges.append(None)
+            else:
+                d, bin_edges = np.histogram(d, weights=w, **binning)
+                w = np.ones(len(d))
+                maybe_binned_data.append(d)
+                maybe_binned_weights.append(w)
+                self.bin_edges.append(bin_edges)
+        return maybe_binned_data, maybe_binned_weights
 
     def _fit(self, initial_parameters, data, weights, mapping):
         """
@@ -109,7 +153,7 @@ class Fitter(object):
         data : numpy-array or list of numpy-array containing the data
         weights : numpy-array or list of numpy-array containing the weights. If None is passed a weight of one is assumed for each event.
         """
-        self.r = self._fit(initial_parameters, *self._ensure_dimension(data, weights), self.mapping)
+        self.r = self._fit(initial_parameters, *self._bin_data_if_necessary(*self._ensure_dimension(data, weights)), self.mapping)
         return self.r
     
     def get_uncertainties(self, parameter_boundaries, data, weights=None):
@@ -129,7 +173,7 @@ class Fitter(object):
             raise RuntimeError("Please call fit first")
         if len(parameter_boundaries) != len(self.r.x):
             raise RuntimeError("The number of provided boundaries does not match the number of fitted parameters")
-        data, weights = self._ensure_dimension(data, weights)
+        data, weights = self._bin_data_if_necessary(*self._ensure_dimension(data, weights))
         uncertainties = []
         for i, boundaries in enumerate(parameter_boundaries):
             if boundaries is None:
@@ -170,7 +214,7 @@ class Fitter(object):
             raise RuntimeError("Please call fit first")
         if len(parameter_values) != len(self.r.x):
             raise RuntimeError("The number of provided values does not match the number of fitted parameters")
-        data, weights = self._ensure_dimension(data, weights)
+        data, weights = self._bin_data_if_necessary(*self._ensure_dimension(data, weights))
         parameter_positions = [i for i, v in enumerate(parameter_values) if v is not None]
         likelihood_profile_function = self._get_likelihood_profile_function(list(self.r.x), parameter_positions)
         return np.array([likelihood_profile_function(list(parameters), data, weights) for parameters in zip(*[v for v in parameter_values if v is not None])])
@@ -195,14 +239,12 @@ class Fitter(object):
             sample_sizes = [sample_sizes]
         result = []
         for i, true_parameter in enumerate(true_parameters):
-            if i % 10 == 0:
-                print(i)
             parameters = self.mapping(true_parameter)
             data = []
             for p, distribution, s in zip(parameters, self.distributions, sample_sizes):
                 data.append(distribution.rvs(size=np.random.poisson(s), **p))
             weights = [np.ones(len(d)) for d in data]
-            r = self._fit(initial_parameters, data, weights, self.mapping)
+            r = self._fit(initial_parameters, *self._bin_data_if_necessary(data, weights), self.mapping)
             if parameter_boundaries is None:
                 uncertainties = None
             else:
@@ -229,7 +271,7 @@ class Fitter(object):
         """
         if self.r is None:
             raise RuntimeError("Please call fit first")
-        data, weights = self._ensure_dimension(data, weights)
+        data, weights = self._bin_data_if_necessary(*self._ensure_dimension(data, weights))
         parameter_positions = [i for i, v in enumerate(parameter_values) if v is not None]
         likelihood_profile_function = self._get_likelihood_profile_function(list(self.r.x), parameter_positions)
         n = likelihood_profile_function([v for v in parameter_values if v is not None], data, weights)
