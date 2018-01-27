@@ -23,7 +23,7 @@ def fit(fitter, data, weights=None, free_parameters=None, n=0, binning=None):
             raise RuntimeError("Please call fit first on the fitter object")
         free_parameters = fitter.r.x
 
-    data, weights = fitter._ensure_dimension(data, weights)
+    data, weights, _ = fitter._ensure_dimension(data, weights, None)
     parameters = fitter.mapping(free_parameters)
 
     data = data[n]
